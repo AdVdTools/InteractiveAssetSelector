@@ -79,3 +79,8 @@ $RECYCLE.BIN/
 
 # Windows shortcuts
 *.lnk
+
+*.meta
+ProjectSettings/
+Assets/*
+!Assets/InteractiveAssetSelector
