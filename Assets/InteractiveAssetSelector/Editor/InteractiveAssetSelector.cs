@@ -6,23 +6,25 @@ using System.Collections.Generic;
 
 public class InteractiveAssetSelector : EditorWindow {
 
-	class SelectionAsset : IComparer<SelectionAsset> {
-		public Object asset;
-		public string path;
-		public bool selected;//if folder this will work as foldout
-		public bool isFolder;
+	class AssetItem : IComparer<AssetItem> {
+		public readonly Object asset;
+		public readonly string path;
+		public readonly string name;
+		public AssetItem parent;
+		public bool state;//whether the asset is selected, if folder this will work as foldout
 
-		public SelectionAsset(Object asset, bool selected = true) {
+		public AssetItem(Object asset, AssetItem parent = null, bool state = true) {
 			this.asset = asset;
 			this.path = AssetDatabase.GetAssetPath(asset);
-			this.selected = selected;
-			this.isFolder = Directory.Exists(this.path);
+			this.name = this.path.Substring(this.path.LastIndexOf('/')+1);
+			this.parent = parent;
+			this.state = state;
 		}
 		//TODO how did I implement the comparer for list sort?
 
 		#region IComparer implementation
 
-		public int Compare (SelectionAsset x, SelectionAsset y)
+		public int Compare (AssetItem x, AssetItem y)
 		{
 			return EditorUtility.NaturalCompare(x.path, y.path);
 		}
@@ -30,8 +32,16 @@ public class InteractiveAssetSelector : EditorWindow {
 		#endregion
 	}
 
-	private List<SelectionAsset> selection = new List<SelectionAsset>();
-	private List<string> visiblePaths = new List<string>();
+	class FolderItem : AssetItem {
+		public List<AssetItem> children = new List<AssetItem> ();
+
+		public FolderItem(Object asset, AssetItem parent = null, bool state = true) : base (asset, parent, state);
+	}
+
+
+//	private List<AssetItem> selection = new List<AssetItem>();
+
+	private FolderItem selectionRoot = new FolderItem(null);
 
 	public System.Action<InteractiveAssetSelector> OnEndGUI;
 
@@ -55,43 +65,50 @@ public class InteractiveAssetSelector : EditorWindow {
 	public static InteractiveAssetSelector InitSelector(Object[] selection) {
 		InteractiveAssetSelector ias = GetWindow<InteractiveAssetSelector>("Select Assets");
 
-		ias.selection.Clear();
-		ias.selection.Capacity = selection.Length;
+//		ias.selection.Clear();
+//		ias.selection.Capacity = selection.Length;
 		foreach(Object obj in selection) {
 			ias.SortedInsert(obj);
 		}
-//		ias.selection.Sort((x,y) => EditorUtility.NaturalCompare(x.path, y.path));
+////		ias.selection.Sort((x,y) => EditorUtility.NaturalCompare(x.path, y.path));
 
 		ias.Show();
 		return ias;
 	}
 
 	public void SortedInsert(Object obj) {
-		SortedInsert(new SelectionAsset(obj));
+		SortedInsert(new AssetItem(obj));
 	}
 
 	public void SortedInsert(string path) {
-		SortedInsert(new SelectionAsset(AssetDatabase.LoadAssetAtPath(path, typeof(Object))));
+		SortedInsert(new AssetItem(AssetDatabase.LoadAssetAtPath(path, typeof(Object))));
 	}
 
-	void SortedInsert(SelectionAsset asset) {
-		//check parent folders first
-		int parentPathLength = asset.path.LastIndexOf('/');
-		if (parentPathLength >= 0) {
-			SortedInsert(asset.path.Substring(0, parentPathLength));//Try to add parent
+	void SortedInsert(AssetItem asset) {
+		string[] splittedPath = asset.path.Split ('/');
+		FolderItem currentFolder = selectionRoot;
+		for (int depth = 0; depth < splittedPath.Length; depth++) {
+			string item = splittedPath [depth];
+
+			//Find -> insert -> continue
 		}
 
-		int index = selection.BinarySearch(asset, asset);//TODO there must be another way
-		if (index < 0) {
-			selection.Insert(~index, asset);
-		}
+		//check parent folders first
+//		int parentPathLength = asset.path.LastIndexOf('/');
+//		if (parentPathLength >= 0) {
+//			SortedInsert(asset.path.Substring(0, parentPathLength));//Try to add parent
+//		}
+//
+//		int index = selection.BinarySearch(asset, asset);//TODO there must be another way
+//		if (index < 0) {
+//			selection.Insert(~index, asset);
+//		}
 	}
 
 	Vector2 scrollPosition;
 	void OnGUI() {
 		string currentPath = "";
 		List<string> currentSplittedPath = new List<string>();
-
 		int visiblePathIndex = 0;
 
 
@@ -102,7 +119,7 @@ public class InteractiveAssetSelector : EditorWindow {
 //		EditorGUILayout.Space();
 
 		EditorGUILayout.BeginScrollView(scrollPosition);
-		foreach (SelectionAsset asset in selection) {
+		foreach (AssetItem asset in selection) {
 			string path = asset.path;
 
 			int parentPathLength = path.LastIndexOf('/');
@@ -113,13 +130,13 @@ public class InteractiveAssetSelector : EditorWindow {
 
 			string name = path.Substring(parentPathLength+1);//TODO make property?
 			if (asset.isFolder) {
-				asset.selected = EditorGUILayout.Foldout(asset.selected, name);
-				if (asset.selected) {
+				asset.state = EditorGUILayout.Foldout(asset.state, name);
+				if (asset.state) {
 					currentPath = asset.path;
 				}
 			}
 			else {
-				asset.selected = EditorGUILayout.ToggleLeft(name, asset.selected);//
+				asset.state = EditorGUILayout.ToggleLeft(name, asset.state);//
 			}
 
 
