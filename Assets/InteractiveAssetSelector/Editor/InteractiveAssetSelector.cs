@@ -1,7 +1,6 @@
 ﻿using UnityEngine;
 using UnityEditor;
 using System.IO;
-using System.Collections;
 using System.Collections.Generic;
 
 public class InteractiveAssetSelector : EditorWindow {
@@ -16,7 +15,8 @@ public class InteractiveAssetSelector : EditorWindow {
 		public AssetItem(Object asset, AssetItem parent = null, bool state = true) {
 			this.asset = asset;
 			this.path = AssetDatabase.GetAssetPath(asset);
-			this.name = this.path.Substring(this.path.LastIndexOf('/')+1);
+			this.name = this.path.Substring(this.path.LastIndexOf('/')+1);//extension needed to differenciate files from folders
+			Debug.Log(path+"_"+name);
 			this.parent = parent;
 			this.state = state;
 		}
@@ -86,10 +86,12 @@ public class InteractiveAssetSelector : EditorWindow {
 	}
 
 	public static InteractiveAssetSelector InitSelector(Object[] selection) {
-		InteractiveAssetSelector ias = GetWindow<InteractiveAssetSelector>("Select Assets");
+		//GetWindow<InteractiveAssetSelector>().Close();
+		InteractiveAssetSelector ias = GetWindow<InteractiveAssetSelector>(true, "Select Assets", true);
 
 		Debug.Log("InitSelector");
 		if (ias.selectionRoot == null) {
+			Debug.Log("Creating Root");
 			ias.selectionRoot = new FolderItem(null);
 		}
 
@@ -100,7 +102,7 @@ public class InteractiveAssetSelector : EditorWindow {
 		}
 ////		ias.selection.Sort((x,y) => EditorUtility.NaturalCompare(x.path, y.path));
 
-		ias.Show();
+//		ias.ShowUtility();
 		Debug.Log("ShowSelector");
 		return ias;
 	}
@@ -170,11 +172,11 @@ public class InteractiveAssetSelector : EditorWindow {
 			}
 		}
 		else {
-			item.state = EditorGUILayout.ToggleLeft(name, item.state);
+			item.state = EditorGUILayout.ToggleLeft(item.name, item.state);
 		}
 	}
 
-	Vector2 scrollPosition;
+	Vector2 scrollPosition = Vector2.zero;
 	void OnGUI() {
 //		string currentPath = "";
 //		List<string> currentSplittedPath = new List<string>();
@@ -190,8 +192,6 @@ public class InteractiveAssetSelector : EditorWindow {
 		EditorGUILayout.BeginScrollView(scrollPosition);
 		foreach (AssetItem asset in selectionRoot.children) {
 			ItemGUI(asset);
-
-			Debug.Log("GUI");
 
 //			string path = asset.path;
 //
