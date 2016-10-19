@@ -6,7 +6,7 @@ using System.Collections.Generic;
 
 public class InteractiveAssetSelector : EditorWindow {
 
-	class AssetItem : IComparer<AssetItem> {
+	class AssetItem : System.IComparable<string> {
 		public readonly Object asset;
 		public readonly string path;
 		public readonly string name;
@@ -20,13 +20,12 @@ public class InteractiveAssetSelector : EditorWindow {
 			this.parent = parent;
 			this.state = state;
 		}
-		//TODO how did I implement the comparer for list sort?
 
-		#region IComparer implementation
+		#region IComparable implementation
 
-		public int Compare (AssetItem x, AssetItem y)
+		public int CompareTo (string other)
 		{
-			return EditorUtility.NaturalCompare(x.path, y.path);
+			return EditorUtility.NaturalCompare(this.name, other);
 		}
 
 		#endregion
@@ -35,13 +34,37 @@ public class InteractiveAssetSelector : EditorWindow {
 	class FolderItem : AssetItem {
 		public List<AssetItem> children = new List<AssetItem> ();
 
-		public FolderItem(Object asset, AssetItem parent = null, bool state = true) : base (asset, parent, state);
+		public FolderItem(Object asset, AssetItem parent = null, bool state = true) : base (asset, parent, state) {
+			
+		}
+
+		public int BinarySearch(string childName) {
+//			System.Array.BinarySearch(children.ToArray(), childName);
+
+			int min = 0;
+			int max = children.Count-1;
+
+			while (min <= max) {
+				int mid = (min + max) / 2;
+				int comparison = children[mid].CompareTo(childName);
+				if (comparison == 0) {
+					return mid;
+				}
+				if (comparison < 0) {
+					min = mid+1;
+				}
+				else {
+					max = mid-1;
+				}
+			}
+			return ~min;
+		}
 	}
 
 
 //	private List<AssetItem> selection = new List<AssetItem>();
 
-	private FolderItem selectionRoot = new FolderItem(null);
+	private FolderItem selectionRoot;
 
 	public System.Action<InteractiveAssetSelector> OnEndGUI;
 
@@ -65,6 +88,11 @@ public class InteractiveAssetSelector : EditorWindow {
 	public static InteractiveAssetSelector InitSelector(Object[] selection) {
 		InteractiveAssetSelector ias = GetWindow<InteractiveAssetSelector>("Select Assets");
 
+		Debug.Log("InitSelector");
+		if (ias.selectionRoot == null) {
+			ias.selectionRoot = new FolderItem(null);
+		}
+
 //		ias.selection.Clear();
 //		ias.selection.Capacity = selection.Length;
 		foreach(Object obj in selection) {
@@ -73,43 +101,84 @@ public class InteractiveAssetSelector : EditorWindow {
 ////		ias.selection.Sort((x,y) => EditorUtility.NaturalCompare(x.path, y.path));
 
 		ias.Show();
+		Debug.Log("ShowSelector");
 		return ias;
 	}
 
-	public void SortedInsert(Object obj) {
-		SortedInsert(new AssetItem(obj));
+
+	public void SortedInsert(IEnumerable<Object> objs) {
+		foreach (Object obj in objs) {
+			SortedInsert(obj);
+		}
 	}
 
-	public void SortedInsert(string path) {
-		SortedInsert(new AssetItem(AssetDatabase.LoadAssetAtPath(path, typeof(Object))));
+	public void SortedInsert(IEnumerable<string> paths) {
+		foreach (string path in paths) {
+			SortedInsert(path);
+		}
 	}
 
-	void SortedInsert(AssetItem asset) {
-		string[] splittedPath = asset.path.Split ('/');
-		FolderItem currentFolder = selectionRoot;
-		for (int depth = 0; depth < splittedPath.Length; depth++) {
-			string item = splittedPath [depth];
+	AssetItem SortedInsert(Object obj) {
+		return SortedInsert(obj, AssetDatabase.GetAssetPath(obj));
+	}
 
-			//Find -> insert -> continue
+	AssetItem SortedInsert(string path) {
+		return SortedInsert(AssetDatabase.LoadAssetAtPath(path, typeof(Object)), path);
+	}
+
+	AssetItem SortedInsert(Object obj, string path) {//AssetItem asset) {
+//		string[] splittedPath = asset.path.Split ('/');
+//		FolderItem currentFolder = selectionRoot;
+//		for (int depth = 0; depth < splittedPath.Length; depth++) {
+//			string item = splittedPath [depth];
+//
+//			//Find -> insert -> continue
+//		}
+
+		FolderItem parent;
+		//check parent folders first
+		int parentPathLength = path.LastIndexOf('/');
+		if (parentPathLength >= 0) {
+			parent = SortedInsert(path.Substring(0, parentPathLength)) as FolderItem;//Try to add parent
+		}
+		else {
+			parent = selectionRoot;
 		}
 
-		//check parent folders first
-//		int parentPathLength = asset.path.LastIndexOf('/');
-//		if (parentPathLength >= 0) {
-//			SortedInsert(asset.path.Substring(0, parentPathLength));//Try to add parent
-//		}
-//
-//		int index = selection.BinarySearch(asset, asset);//TODO there must be another way
-//		if (index < 0) {
-//			selection.Insert(~index, asset);
-//		}
+		int index = parent.BinarySearch(path.Substring(parentPathLength+1));//TODO there must be another way
+		if (index < 0) {
+			AssetItem item = Directory.Exists(path) ? new FolderItem(obj, parent) : new AssetItem(obj, parent);
+			parent.children.Insert(~index, item);
+			return item;
+		}
+		else {
+			return parent.children[index];
+		}
+	}
+
+	void ItemGUI(AssetItem item) {
+		if (item is FolderItem) {
+			FolderItem folder = (FolderItem)item;
+
+			folder.state = EditorGUILayout.Foldout(folder.state, folder.name);
+			if (folder.state) {
+				EditorGUI.indentLevel++;
+				foreach(AssetItem i in folder.children) {
+					ItemGUI(i);
+				}
+				EditorGUI.indentLevel--;
+			}
+		}
+		else {
+			item.state = EditorGUILayout.ToggleLeft(name, item.state);
+		}
 	}
 
 	Vector2 scrollPosition;
 	void OnGUI() {
-		string currentPath = "";
-		List<string> currentSplittedPath = new List<string>();
-		int visiblePathIndex = 0;
+//		string currentPath = "";
+//		List<string> currentSplittedPath = new List<string>();
+//		int visiblePathIndex = 0;
 
 
 //		foreach (SelectionAsset asset in selection) {
@@ -119,25 +188,29 @@ public class InteractiveAssetSelector : EditorWindow {
 //		EditorGUILayout.Space();
 
 		EditorGUILayout.BeginScrollView(scrollPosition);
-		foreach (AssetItem asset in selection) {
-			string path = asset.path;
+		foreach (AssetItem asset in selectionRoot.children) {
+			ItemGUI(asset);
 
-			int parentPathLength = path.LastIndexOf('/');
-			string parent = parentPathLength < 0 ? "" : path.Substring(0, parentPathLength);
-			if (!currentPath.StartsWith(parent)) continue;//Hidden
-			currentPath = parent;
-			EditorGUI.indentLevel = PathDepth(currentPath)+1;
+			Debug.Log("GUI");
 
-			string name = path.Substring(parentPathLength+1);//TODO make property?
-			if (asset.isFolder) {
-				asset.state = EditorGUILayout.Foldout(asset.state, name);
-				if (asset.state) {
-					currentPath = asset.path;
-				}
-			}
-			else {
-				asset.state = EditorGUILayout.ToggleLeft(name, asset.state);//
-			}
+//			string path = asset.path;
+//
+//			int parentPathLength = path.LastIndexOf('/');
+//			string parent = parentPathLength < 0 ? "" : path.Substring(0, parentPathLength);
+//			if (!currentPath.StartsWith(parent)) continue;//Hidden
+//			currentPath = parent;
+//			EditorGUI.indentLevel = PathDepth(currentPath)+1;
+//
+//			string name = path.Substring(parentPathLength+1);//TODO make property?
+//			if (asset.isFolder) {
+//				asset.state = EditorGUILayout.Foldout(asset.state, name);
+//				if (asset.state) {
+//					currentPath = asset.path;
+//				}
+//			}
+//			else {
+//				asset.state = EditorGUILayout.ToggleLeft(name, asset.state);//
+//			}
 
 
 
