@@ -1,4 +1,8 @@
-﻿using UnityEngine;
+﻿/*
+ * Created by Angel David on 18/10/2016.
+ */
+
+using UnityEngine;
 using UnityEditor;
 using System.IO;
 using System.Collections.Generic;
@@ -9,16 +13,16 @@ public class InteractiveAssetSelector : EditorWindow {
 		public readonly Object asset;
 		public readonly string path;
 		public readonly string name;
-		public AssetItem parent;
-		public bool state;//whether the asset is selected, if folder this will work as foldout
+		public FolderItem parent;
+		public bool selected;//whether the asset is selected
 
-		public AssetItem(Object asset, AssetItem parent = null, bool state = true) {
+		public AssetItem(Object asset, FolderItem parent = null, bool selected = true) {
 			this.asset = asset;
 			this.path = AssetDatabase.GetAssetPath(asset);
 			this.name = this.path.Substring(this.path.LastIndexOf('/')+1);//extension needed to differenciate files from folders
 			Debug.Log(path+"_"+name);
 			this.parent = parent;
-			this.state = state;
+			this.selected = selected;
 		}
 
 		#region IComparable implementation
@@ -29,12 +33,25 @@ public class InteractiveAssetSelector : EditorWindow {
 		}
 
 		#endregion
+
+		public void DoGUI() {
+			GUIContent content = new GUIContent(EditorGUIUtility.ObjectContent(this.asset, this.asset.GetType()));
+
+			this.selected = EditorGUILayout.ToggleLeft(content, this.selected);
+
+//			this.selected = EditorGUILayout.Toggle(this.selected, GUILayout.MaxWidth(12f));
+//			Rect r = GUILayoutUtility.GetRect(15f, EditorGUIUtility.singleLineHeight, EditorStyles.label, GUILayout.MaxWidth(15f));
+//			r.x += EditorGUI.indentLevel * 16f;
+//			GUI.DrawTexture(r, content.image, ScaleMode.ScaleToFit);
+//			EditorGUILayout.LabelField(asset.name);
+		}
 	}
 
 	class FolderItem : AssetItem {
 		public List<AssetItem> children = new List<AssetItem> ();
+		public bool foldout = true;
 
-		public FolderItem(Object asset, AssetItem parent = null, bool state = true) : base (asset, parent, state) {
+		public FolderItem(Object asset, FolderItem parent = null, bool selected = true) : base (asset, parent, selected) {
 			
 		}
 
@@ -59,6 +76,66 @@ public class InteractiveAssetSelector : EditorWindow {
 			}
 			return ~min;
 		}
+
+		public bool AnyChildrenSelected () {
+			foreach (AssetItem asset in children) {
+				if (asset is FolderItem) {
+					FolderItem folder = (FolderItem)asset;
+					if (folder.AnyChildrenSelected()) {
+						return true;
+					}
+				}
+				else {
+					if (asset.selected) {
+						return true;
+					}
+				}
+			}
+			return false;
+		}
+
+		public int ChildrenSelected () { // -1: Any, 0: None, 1: All
+			bool any = false, all = true;
+			foreach (AssetItem asset in children) {
+				if (asset is FolderItem) {
+					FolderItem folder = (FolderItem)asset;
+					int cs = folder.ChildrenSelected();
+
+					any |= cs != 0;
+					all &= cs == 1;
+				}
+				else {
+					any |= asset.selected;
+					all &= asset.selected;
+				}
+			}
+			return any ? (all ? 1 : -1) : 0;
+		}
+
+		public void SelectChildren() {
+			foreach (AssetItem asset in children) {
+				if (asset is FolderItem) {
+					FolderItem folder = (FolderItem)asset;
+					folder.selected = true;
+					folder.SelectChildren();
+				}
+				else {
+					asset.selected = true;
+				}
+			}
+		}
+		public void DeselectChildren() {
+			foreach (AssetItem asset in children) {
+				if (asset is FolderItem) {
+					FolderItem folder = (FolderItem)asset;
+					folder.selected = false;
+					folder.DeselectChildren();
+				}
+				else {
+					asset.selected = false;
+				}
+			}
+		}
 	}
 
 
@@ -66,7 +143,9 @@ public class InteractiveAssetSelector : EditorWindow {
 
 	private FolderItem selectionRoot;
 
-	public System.Action<InteractiveAssetSelector> OnEndGUI;
+	public bool ignoreEmptyFolders;
+	public delegate void EndGUIDelegate(InteractiveAssetSelector assetSelector);
+	public EndGUIDelegate OnEndGUI;
 
 	[MenuItem("Assets/Interactive Asset Selector")]
 	public static InteractiveAssetSelector InitSelector() {
@@ -76,6 +155,7 @@ public class InteractiveAssetSelector : EditorWindow {
 	[MenuItem("Assets/Custom Exporter")]
 	public static InteractiveAssetSelector Export() {
 		InteractiveAssetSelector ias = InitSelector();
+		ias.ignoreEmptyFolders = true;
 		ias.OnEndGUI = (selector) => {
 			EditorGUILayout.Space();
 			if (GUILayout.Button("Export")){
@@ -90,10 +170,6 @@ public class InteractiveAssetSelector : EditorWindow {
 		InteractiveAssetSelector ias = GetWindow<InteractiveAssetSelector>(true, "Select Assets", true);
 
 		Debug.Log("InitSelector");
-		if (ias.selectionRoot == null) {
-			Debug.Log("Creating Root");
-			ias.selectionRoot = new FolderItem(null);
-		}
 
 //		ias.selection.Clear();
 //		ias.selection.Capacity = selection.Length;
@@ -107,24 +183,38 @@ public class InteractiveAssetSelector : EditorWindow {
 		return ias;
 	}
 
+	void OnEnable() {
+		if (selectionRoot == null) {
+			Debug.Log("Creating Root");
+			selectionRoot = new FolderItem(null);
+		}
+		Debug.Log("Repaint?");
+		Repaint();
+	}
+
 
 	public void SortedInsert(IEnumerable<Object> objs) {
 		foreach (Object obj in objs) {
 			SortedInsert(obj);
 		}
+		ValidateSelection();
 	}
 
-	public void SortedInsert(IEnumerable<string> paths) {
+	public void SortedInsert(IEnumerable<string> paths, bool recursive) {
 		foreach (string path in paths) {
-			SortedInsert(path);
+			SortedInsert(path, recursive);
 		}
+		ValidateSelection();
 	}
 
 	AssetItem SortedInsert(Object obj) {
 		return SortedInsert(obj, AssetDatabase.GetAssetPath(obj));
 	}
 
-	AssetItem SortedInsert(string path) {
+	AssetItem SortedInsert(string path, bool recursive) {
+		if (recursive) {
+			SortedInsert(GetAssetsAtPaths(path), false);
+		}
 		return SortedInsert(AssetDatabase.LoadAssetAtPath(path, typeof(Object)), path);
 	}
 
@@ -136,12 +226,15 @@ public class InteractiveAssetSelector : EditorWindow {
 //
 //			//Find -> insert -> continue
 //		}
+		if (AssetDatabase.IsSubAsset(obj)) {
+			return null;
+		}
 
 		FolderItem parent;
-		//check parent folders first
+		//check parent folders first//TODO change to top-down check/insert?
 		int parentPathLength = path.LastIndexOf('/');
 		if (parentPathLength >= 0) {
-			parent = SortedInsert(path.Substring(0, parentPathLength)) as FolderItem;//Try to add parent
+			parent = SortedInsert(path.Substring(0, parentPathLength), false) as FolderItem;//Try to add parent
 		}
 		else {
 			parent = selectionRoot;
@@ -149,7 +242,7 @@ public class InteractiveAssetSelector : EditorWindow {
 
 		int index = parent.BinarySearch(path.Substring(parentPathLength+1));//TODO there must be another way
 		if (index < 0) {
-			AssetItem item = Directory.Exists(path) ? new FolderItem(obj, parent) : new AssetItem(obj, parent);
+			AssetItem item = AssetDatabase.IsValidFolder(path) ? new FolderItem(obj, parent) : new AssetItem(obj, parent);
 			parent.children.Insert(~index, item);
 			return item;
 		}
@@ -158,23 +251,106 @@ public class InteractiveAssetSelector : EditorWindow {
 		}
 	}
 
-	void ItemGUI(AssetItem item) {
+
+	/// <summary>
+	/// Gets the asset paths at the specified paths.
+	/// </summary>
+	/// <returns>The assets at paths.</returns>
+	/// <param name="paths">Paths.</param>
+	string[] GetAssetsAtPaths(params string[] paths) {
+		string[] assets = AssetDatabase.FindAssets(string.Empty, paths);
+		for(int i = 0; i < assets.Length; i++) {
+			assets[i] = AssetDatabase.GUIDToAssetPath(assets[i]);
+		}
+		return assets;
+	}
+
+
+	void DoItemGUI(AssetItem item) {
 		if (item is FolderItem) {
 			FolderItem folder = (FolderItem)item;
 
-			folder.state = EditorGUILayout.Foldout(folder.state, folder.name);
-			if (folder.state) {
+			Rect fRect = EditorGUILayout.BeginHorizontal();
+			int childrenSelected = folder.ChildrenSelected();
+			EditorGUI.showMixedValue = childrenSelected < 0;//Some but not all //folder.selected;//
+			folder.foldout = ContentlessFoldout.DoFoldout(folder.foldout);
+			//TODO get foldout rect -> EditorStyles.foldout.Draw..., on click -> switch (warp in method)
+
+			GUI.changed = false;
+//			bool selectFolder = EditorGUILayout.ToggleLeft(content, folder.selected);
+			folder.DoGUI();
+			if (GUI.changed) {
+				if (folder.selected) {
+					folder.SelectChildren();
+				}
+				else {
+					folder.DeselectChildren();
+				}
+			}
+			folder.selected = childrenSelected > 0;
+
+			EditorGUILayout.EndHorizontal();
+			if (Event.current.type == EventType.ContextClick && fRect.Contains(Event.current.mousePosition)) {
+				FolderContextMenu(folder);
+			}
+
+			if (folder.foldout) {
 				EditorGUI.indentLevel++;
 				foreach(AssetItem i in folder.children) {
-					ItemGUI(i);
+					DoItemGUI(i);//TODO return childrenselected state to decide this state 
+//					folder.selected &= i.selected;
 				}
 				EditorGUI.indentLevel--;
 			}
 		}
 		else {
-			item.state = EditorGUILayout.ToggleLeft(item.name, item.state);
+			Rect iRect = EditorGUILayout.BeginHorizontal();
+			EditorGUI.showMixedValue = false;
+//			EditorGUI.indentLevel++;
+			GUILayout.Space(20f);
+			item.DoGUI();
+//			EditorGUI.indentLevel--;
+			EditorGUILayout.EndHorizontal();
+			if (Event.current.type == EventType.ContextClick && iRect.Contains(Event.current.mousePosition)) {
+				AssetContextMenu(item);
+			}
 		}
 	}
+	//TODO ignoredFolders = false
+
+	void FolderContextMenu(FolderItem folder) {
+		GenericMenu gm = new GenericMenu();
+		AddCommonContextOptions(gm, folder);
+		gm.AddItem(new GUIContent("Include folder recursively"), false, () => {
+			SortedInsert(folder.path, true);
+			ValidateSelection();
+		});
+		gm.AddItem(new GUIContent("Colapse children foldouts"), false, () => {
+			foreach(AssetItem item in folder.children) {
+				if (item is FolderItem) {
+					((FolderItem)item).foldout = false;
+				}
+			}
+		});
+		gm.ShowAsContext();
+	}
+
+	void AssetContextMenu(AssetItem asset) {
+		GenericMenu gm = new GenericMenu();
+		AddCommonContextOptions(gm, asset);
+		gm.AddItem(new GUIContent("Include dependencies"), false, () => {
+			SortedInsert(AssetDatabase.GetDependencies(asset.path, true), false);
+		});
+		gm.ShowAsContext();
+	}
+
+	void AddCommonContextOptions(GenericMenu gm, AssetItem asset) {
+		gm.AddItem(new GUIContent("Remove from selector"), false, () => {
+			asset.parent.children.Remove(asset);
+			ValidateSelection();
+		});
+	}
+
 
 	Vector2 scrollPosition = Vector2.zero;
 	void OnGUI() {
@@ -189,9 +365,9 @@ public class InteractiveAssetSelector : EditorWindow {
 //
 //		EditorGUILayout.Space();
 
-		EditorGUILayout.BeginScrollView(scrollPosition);
+		scrollPosition = EditorGUILayout.BeginScrollView(scrollPosition);
 		foreach (AssetItem asset in selectionRoot.children) {
-			ItemGUI(asset);
+			DoItemGUI(asset);
 
 //			string path = asset.path;
 //
@@ -285,19 +461,57 @@ public class InteractiveAssetSelector : EditorWindow {
 //			}
 //		}
 
-		//TODO drag and drop
+		// DragAndDrop operation
+		if (Event.current.type == EventType.DragUpdated){
+			Object[] objs = DragAndDrop.objectReferences;
+			if (ArrayUtility.FindIndex(objs, (obj) => AssetDatabase.IsMainAsset(obj)) >= 0) {
+				DragAndDrop.visualMode = DragAndDropVisualMode.Link;
+			}
+		}
+		else if (Event.current.type == EventType.DragPerform){
+			DragAndDrop.AcceptDrag();
+			Object[] objs = DragAndDrop.objectReferences;
+			foreach(Object obj in objs) {
+				string path = AssetDatabase.GetAssetPath(obj);
+				SortedInsert(path, true);
+			}
+			//TEST
+//			foreach(Object o in objs) {
+//				string p = AssetDatabase.GetAssetPath(o);
+//				if (!AssetDatabase.IsValidFolder(p)) {
+//					Debug.Log("Folder: "+p);
+//					foreach(string s in AssetDatabase.FindAssets("", new string[]{p})) {
+//						Debug.Log("Asset: "+AssetDatabase.GUIDToAssetPath(s));
+//					}
+//				}
+//			}
+			ValidateSelection();
+		}
 
-		if (OnEndGUI != null) OnEndGUI(this);
+		if (OnEndGUI != null) {
+			OnEndGUI(this);//TODO close window if no delegate (have an empty one atleast
+		}
+		else {
+			Close();
+		}
 	}
 
-	int PathDepth(string path) {
-		if (path.Equals("")) {
-			return -1;
+	void ValidateSelection() {
+		if (ignoreEmptyFolders) {
+			RemoveEmptyFolders(selectionRoot);
 		}
-		int count = 0, index = 0;
-		while((index = path.IndexOf('/', index+1)) != -1) {
-			count++;
-		}
-		return count;
 	}
+
+	void RemoveEmptyFolders(FolderItem folder) {//TODO move to FolderItem?
+		folder.children.RemoveAll((asset) => {
+			if (asset is FolderItem) {
+				FolderItem f = (FolderItem)asset;
+				RemoveEmptyFolders(f);
+				return f.children.Count == 0;
+			}
+			return false;
+		});
+	}
+
+	//TODO save selections + load dropdown
 }
