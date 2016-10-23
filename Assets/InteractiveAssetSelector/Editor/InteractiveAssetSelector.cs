@@ -308,6 +308,7 @@ public class InteractiveAssetSelector : EditorWindow {
 	void AssetContextMenu(AssetItem asset) {
 		GenericMenu gm = new GenericMenu();
 		gm.AddItem(new GUIContent("Include dependencies"), false, () => {
+			//			AssetDatabase.SaveAssets();//This is allows GetDependencies to get updated dependencies (may give trouble)
 			SortedInsert(AssetDatabase.GetDependencies(asset.path, true), false);
 		});
 		AddCommonContextOptions(gm, asset);
@@ -414,8 +415,9 @@ public class InteractiveAssetSelector : EditorWindow {
 
 	public static void ExportOptionsGUI(InteractiveAssetSelector selector) {
 		EditorGUILayout.BeginHorizontal();
-		if (GUILayout.Button("Include All Dependencies")) {
-			selector.SortedInsert(AssetDatabase.GetDependencies(selector.GetSelectedPaths()), false);
+		if (GUILayout.Button(new GUIContent("Include Dependencies", "Include dependencies of the selection"))) {
+			//			AssetDatabase.SaveAssets();//This is allows GetDependencies to get updated dependencies (may give trouble)
+			selector.SortedInsert(AssetDatabase.GetDependencies(selector.GetSelectedPaths(), true), false);
 		}
 		GUILayout.FlexibleSpace();
 		if (GUILayout.Button("Export...")){
@@ -426,7 +428,9 @@ public class InteractiveAssetSelector : EditorWindow {
 
 	public void ExportSelection(string directory = "", string name = "") {
 		string path = EditorUtility.SaveFilePanel("Export package", directory, name, "unitypackage");
-		AssetDatabase.ExportPackage(GetSelectedPaths(), path, ExportPackageOptions.Interactive);
+		if (!string.IsNullOrEmpty(path)) {
+			AssetDatabase.ExportPackage(GetSelectedPaths(), path, ExportPackageOptions.Interactive);
+		}
 	}
 
 	public string[] GetSelectedPaths() {
@@ -477,8 +481,6 @@ public class InteractiveAssetSelector : EditorWindow {
 			}
 		}
 	}
-
-	//TODO textures not found as dependencies!! update before checking?
 
 	//TODO save selections + load dropdown
 }

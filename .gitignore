@@ -27,7 +27,6 @@ sysinfo.txt
 
 # Builds
 *.apk
-*.unitypackage
 
 # =========================
 # Operating System Files
@@ -84,3 +83,5 @@ $RECYCLE.BIN/
 ProjectSettings/
 Assets/*
 !Assets/InteractiveAssetSelector
+*.gif
+*.stg
