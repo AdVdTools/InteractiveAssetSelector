@@ -20,7 +20,6 @@ public class InteractiveAssetSelector : EditorWindow {
 			this.asset = asset;
 			this.path = AssetDatabase.GetAssetPath(asset);
 			this.name = this.path.Substring(this.path.LastIndexOf('/')+1);//extension needed to differenciate files from folders
-			Debug.Log(path+"_"+name);
 			this.parent = parent;
 			this.selected = selected;
 		}
@@ -65,16 +64,6 @@ public class InteractiveAssetSelector : EditorWindow {
 			return ~min;
 		}
 
-		public void RemoveEmptySubFolders() {
-			this.children.RemoveAll((asset) => {
-				if (asset is FolderItem) {
-					FolderItem f = (FolderItem)asset;
-					f.RemoveEmptySubFolders();
-					return f.children.Count == 0;
-				}
-				return false;
-			});
-		}
 
 		public bool AnyChildrenSelected () {
 			foreach (AssetItem asset in children) {
@@ -146,7 +135,6 @@ public class InteractiveAssetSelector : EditorWindow {
 	private FolderItem selectionRoot;
 
 	public string description;
-	public bool ignoreEmptyFolders;
 	public delegate void OptionsGUIDelegate(InteractiveAssetSelector assetSelector);
 	public OptionsGUIDelegate OnOptionsGUI;
 
@@ -158,13 +146,11 @@ public class InteractiveAssetSelector : EditorWindow {
 		}
 		ias.ValidateSelection();
 
-//		ias.ShowUtility();
 		return ias;
 	}
 
-	[MenuItem("Assets/Interactive Asset Selector")]
+//	[MenuItem("Assets/Interactive Asset Selector")]
 	public static InteractiveAssetSelector InitSelector() {
-		Debug.Log("Hello");
 		return InitSelector(Selection.GetFiltered(typeof(Object), SelectionMode.DeepAssets));
 	}
 
@@ -172,8 +158,6 @@ public class InteractiveAssetSelector : EditorWindow {
 	public static InteractiveAssetSelector ExportSelector() {
 		InteractiveAssetSelector ias = InitSelector();
 		ias.description = "Assets to Export";// Assets to export Assets to export Assets to exportAssets to exportAssets to exportAssets to export";
-		ias.ignoreEmptyFolders = true;
-		ias.ValidateSelection();
 		ias.OnOptionsGUI = ExportOptionsGUI;
 		return ias;
 	}
@@ -186,10 +170,8 @@ public class InteractiveAssetSelector : EditorWindow {
 //		this.Focus();
 	}
 
-	//TODO serialize selection to implement undo/redo?
-	//TODO test moving/renaming asset onprojectchanged
-	void OnProjectChanged() {
-		Debug.Log("ProjectChanged");
+	void OnProjectChange() {
+		ValidateSelection();
 	}
 
 	public void SortedInsert(IEnumerable<Object> objs) {
@@ -312,7 +294,6 @@ public class InteractiveAssetSelector : EditorWindow {
 			}
 		}
 	}
-	//TODO ignoredFolders = false
 
 	void FolderContextMenu(FolderItem folder) {
 		GenericMenu gm = new GenericMenu();
@@ -402,10 +383,34 @@ public class InteractiveAssetSelector : EditorWindow {
 	}
 
 	void ValidateSelection() {
-		if (ignoreEmptyFolders) {
-			selectionRoot.RemoveEmptySubFolders();
-		}
+		ValidateAssetPaths(selectionRoot);
+//		selectionRoot.RemoveEmptySubFolders();
 	}
+
+
+	void ValidateAssetPaths(FolderItem folder) {
+		folder.children.RemoveAll((asset) => {
+			if (asset is FolderItem) {
+				FolderItem f = (FolderItem)asset;
+				ValidateAssetPaths(f);
+				if (f.children.Count == 0) {
+					return true;
+				}
+			}
+			string guid = AssetDatabase.AssetPathToGUID(asset.path);
+			if (asset.asset == null || string.IsNullOrEmpty(guid)) {
+				if (asset.asset != null) {
+					string newPath = SortedInsert(asset.asset).path;
+					Debug.LogWarning(asset.path+" moved to "+newPath);
+				}
+				return true;
+			}
+			return false;
+		});
+	}
+
+
+
 
 	public static void ExportOptionsGUI(InteractiveAssetSelector selector) {
 		EditorGUILayout.BeginHorizontal();
@@ -433,7 +438,6 @@ public class InteractiveAssetSelector : EditorWindow {
 	void AddSelectedPaths(FolderItem folder, List<string> pathsList) {
 		foreach(AssetItem item in folder.children) {
 			if (item is FolderItem) {
-				//TODO handle extra options (include/ingore folders?)
 				AddSelectedPaths((FolderItem)item, pathsList);
 			}
 			else if (item.selected) {
@@ -451,7 +455,6 @@ public class InteractiveAssetSelector : EditorWindow {
 	void AddSelectedAssets(FolderItem folder, List<Object> objsList) {
 		foreach(AssetItem item in folder.children) {
 			if (item is FolderItem) {
-				//TODO handle extra options (include/ingore folders?)
 				AddSelectedAssets((FolderItem)item, objsList);
 			}
 			else if (item.selected) {
@@ -459,6 +462,23 @@ public class InteractiveAssetSelector : EditorWindow {
 			}
 		}
 	}
+
+	public string[] GetAllPaths() {
+		List<string> paths = new List<string>();
+		AddChildrenPaths(selectionRoot, paths);
+		return paths.ToArray();
+	}
+
+	void AddChildrenPaths(FolderItem folder, List<string> pathsList) {
+		foreach(AssetItem item in folder.children) {
+			pathsList.Add(item.path);
+			if (item is FolderItem) {
+				AddChildrenPaths((FolderItem)item, pathsList);
+			}
+		}
+	}
+
+	//TODO textures not found as dependencies!! update before checking?
 
 	//TODO save selections + load dropdown
 }
