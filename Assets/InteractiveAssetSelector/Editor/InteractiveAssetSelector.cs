@@ -33,18 +33,6 @@ public class InteractiveAssetSelector : EditorWindow {
 		}
 
 		#endregion
-
-		public void DoGUI() {
-			GUIContent content = new GUIContent(EditorGUIUtility.ObjectContent(this.asset, this.asset.GetType()));
-
-			this.selected = EditorGUILayout.ToggleLeft(content, this.selected);
-
-//			this.selected = EditorGUILayout.Toggle(this.selected, GUILayout.MaxWidth(12f));
-//			Rect r = GUILayoutUtility.GetRect(15f, EditorGUIUtility.singleLineHeight, EditorStyles.label, GUILayout.MaxWidth(15f));
-//			r.x += EditorGUI.indentLevel * 16f;
-//			GUI.DrawTexture(r, content.image, ScaleMode.ScaleToFit);
-//			EditorGUILayout.LabelField(asset.name);
-		}
 	}
 
 	class FolderItem : AssetItem {
@@ -77,6 +65,17 @@ public class InteractiveAssetSelector : EditorWindow {
 			return ~min;
 		}
 
+		public void RemoveEmptySubFolders() {
+			this.children.RemoveAll((asset) => {
+				if (asset is FolderItem) {
+					FolderItem f = (FolderItem)asset;
+					f.RemoveEmptySubFolders();
+					return f.children.Count == 0;
+				}
+				return false;
+			});
+		}
+
 		public bool AnyChildrenSelected () {
 			foreach (AssetItem asset in children) {
 				if (asset is FolderItem) {
@@ -107,6 +106,9 @@ public class InteractiveAssetSelector : EditorWindow {
 				else {
 					any |= asset.selected;
 					all &= asset.selected;
+				}
+				if (any && !all) {
+					break;
 				}
 			}
 			return any ? (all ? 1 : -1) : 0;
@@ -143,68 +145,63 @@ public class InteractiveAssetSelector : EditorWindow {
 
 	private FolderItem selectionRoot;
 
+	public string description;
 	public bool ignoreEmptyFolders;
-	public delegate void EndGUIDelegate(InteractiveAssetSelector assetSelector);
-	public EndGUIDelegate OnEndGUI;
+	public delegate void OptionsGUIDelegate(InteractiveAssetSelector assetSelector);
+	public OptionsGUIDelegate OnOptionsGUI;
+
+	public static InteractiveAssetSelector InitSelector(Object[] selection) {
+		InteractiveAssetSelector ias = GetWindow<InteractiveAssetSelector>(true, "Select Assets", true);
+
+		foreach(Object obj in selection) {
+			ias.SortedInsert(obj);
+		}
+		ias.ValidateSelection();
+
+//		ias.ShowUtility();
+		return ias;
+	}
 
 	[MenuItem("Assets/Interactive Asset Selector")]
 	public static InteractiveAssetSelector InitSelector() {
+		Debug.Log("Hello");
 		return InitSelector(Selection.GetFiltered(typeof(Object), SelectionMode.DeepAssets));
 	}
 
 	[MenuItem("Assets/Custom Exporter")]
-	public static InteractiveAssetSelector Export() {
+	public static InteractiveAssetSelector ExportSelector() {
 		InteractiveAssetSelector ias = InitSelector();
+		ias.description = "Assets to Export";// Assets to export Assets to export Assets to exportAssets to exportAssets to exportAssets to export";
 		ias.ignoreEmptyFolders = true;
-		ias.OnEndGUI = (selector) => {
-			EditorGUILayout.Space();
-			if (GUILayout.Button("Export")){
-				Debug.Log("Export");
-			}
-		};
-		return ias;
-	}
-
-	public static InteractiveAssetSelector InitSelector(Object[] selection) {
-		//GetWindow<InteractiveAssetSelector>().Close();
-		InteractiveAssetSelector ias = GetWindow<InteractiveAssetSelector>(true, "Select Assets", true);
-
-		Debug.Log("InitSelector");
-
-//		ias.selection.Clear();
-//		ias.selection.Capacity = selection.Length;
-		foreach(Object obj in selection) {
-			ias.SortedInsert(obj);
-		}
-////		ias.selection.Sort((x,y) => EditorUtility.NaturalCompare(x.path, y.path));
-
-//		ias.ShowUtility();
-		Debug.Log("ShowSelector");
+		ias.ValidateSelection();
+		ias.OnOptionsGUI = ExportOptionsGUI;
 		return ias;
 	}
 
 	void OnEnable() {
 		if (selectionRoot == null) {
-			Debug.Log("Creating Root");
 			selectionRoot = new FolderItem(null);
 		}
-		Debug.Log("Repaint?");
-		Repaint();
+		this.autoRepaintOnSceneChange = true;
+//		this.Focus();
 	}
 
+	//TODO serialize selection to implement undo/redo?
+	//TODO test moving/renaming asset onprojectchanged
+	void OnProjectChanged() {
+		Debug.Log("ProjectChanged");
+	}
 
 	public void SortedInsert(IEnumerable<Object> objs) {
 		foreach (Object obj in objs) {
 			SortedInsert(obj);
 		}
-		ValidateSelection();
 	}
 
 	public void SortedInsert(IEnumerable<string> paths, bool recursive) {
 		foreach (string path in paths) {
 			SortedInsert(path, recursive);
 		}
-		ValidateSelection();
 	}
 
 	AssetItem SortedInsert(Object obj) {
@@ -218,20 +215,13 @@ public class InteractiveAssetSelector : EditorWindow {
 		return SortedInsert(AssetDatabase.LoadAssetAtPath(path, typeof(Object)), path);
 	}
 
-	AssetItem SortedInsert(Object obj, string path) {//AssetItem asset) {
-//		string[] splittedPath = asset.path.Split ('/');
-//		FolderItem currentFolder = selectionRoot;
-//		for (int depth = 0; depth < splittedPath.Length; depth++) {
-//			string item = splittedPath [depth];
-//
-//			//Find -> insert -> continue
-//		}
+	AssetItem SortedInsert(Object obj, string path) {
 		if (AssetDatabase.IsSubAsset(obj)) {
 			return null;
 		}
 
 		FolderItem parent;
-		//check parent folders first//TODO change to top-down check/insert?
+		// Check parent folders first
 		int parentPathLength = path.LastIndexOf('/');
 		if (parentPathLength >= 0) {
 			parent = SortedInsert(path.Substring(0, parentPathLength), false) as FolderItem;//Try to add parent
@@ -240,7 +230,7 @@ public class InteractiveAssetSelector : EditorWindow {
 			parent = selectionRoot;
 		}
 
-		int index = parent.BinarySearch(path.Substring(parentPathLength+1));//TODO there must be another way
+		int index = parent.BinarySearch(path.Substring(parentPathLength+1));
 		if (index < 0) {
 			AssetItem item = AssetDatabase.IsValidFolder(path) ? new FolderItem(obj, parent) : new AssetItem(obj, parent);
 			parent.children.Insert(~index, item);
@@ -267,27 +257,36 @@ public class InteractiveAssetSelector : EditorWindow {
 
 
 	void DoItemGUI(AssetItem item) {
+		GUIContent content = new GUIContent(EditorGUIUtility.ObjectContent(item.asset, item.asset.GetType()));
+		content.text = item.name;
+
 		if (item is FolderItem) {
 			FolderItem folder = (FolderItem)item;
 
 			Rect fRect = EditorGUILayout.BeginHorizontal();
 			int childrenSelected = folder.ChildrenSelected();
-			EditorGUI.showMixedValue = childrenSelected < 0;//Some but not all //folder.selected;//
+			EditorGUI.showMixedValue = childrenSelected < 0;//Some but not all
 			folder.foldout = ContentlessFoldout.DoFoldout(folder.foldout);
-			//TODO get foldout rect -> EditorStyles.foldout.Draw..., on click -> switch (warp in method)
 
 			GUI.changed = false;
-//			bool selectFolder = EditorGUILayout.ToggleLeft(content, folder.selected);
-			folder.DoGUI();
+			bool selectFolder = EditorGUILayout.ToggleLeft(content, folder.selected);
 			if (GUI.changed) {
-				if (folder.selected) {
-					folder.SelectChildren();
+				if (EditorGUI.showMixedValue) {//selectFolder == true if toggle was clicked
+					if (selectFolder) {
+						folder.selected = false;
+						folder.DeselectChildren();
+					}
 				}
 				else {
-					folder.DeselectChildren();
+					if (folder.selected = selectFolder) {
+						folder.SelectChildren();
+					}
+					else {
+						folder.DeselectChildren();
+					}
 				}
 			}
-			folder.selected = childrenSelected > 0;
+			folder.selected = childrenSelected != 0;
 
 			EditorGUILayout.EndHorizontal();
 			if (Event.current.type == EventType.ContextClick && fRect.Contains(Event.current.mousePosition)) {
@@ -297,8 +296,7 @@ public class InteractiveAssetSelector : EditorWindow {
 			if (folder.foldout) {
 				EditorGUI.indentLevel++;
 				foreach(AssetItem i in folder.children) {
-					DoItemGUI(i);//TODO return childrenselected state to decide this state 
-//					folder.selected &= i.selected;
+					DoItemGUI(i);
 				}
 				EditorGUI.indentLevel--;
 			}
@@ -306,10 +304,8 @@ public class InteractiveAssetSelector : EditorWindow {
 		else {
 			Rect iRect = EditorGUILayout.BeginHorizontal();
 			EditorGUI.showMixedValue = false;
-//			EditorGUI.indentLevel++;
 			GUILayout.Space(20f);
-			item.DoGUI();
-//			EditorGUI.indentLevel--;
+			item.selected = EditorGUILayout.ToggleLeft(content, item.selected);
 			EditorGUILayout.EndHorizontal();
 			if (Event.current.type == EventType.ContextClick && iRect.Contains(Event.current.mousePosition)) {
 				AssetContextMenu(item);
@@ -320,27 +316,20 @@ public class InteractiveAssetSelector : EditorWindow {
 
 	void FolderContextMenu(FolderItem folder) {
 		GenericMenu gm = new GenericMenu();
-		AddCommonContextOptions(gm, folder);
 		gm.AddItem(new GUIContent("Include folder recursively"), false, () => {
 			SortedInsert(folder.path, true);
 			ValidateSelection();
 		});
-		gm.AddItem(new GUIContent("Colapse children foldouts"), false, () => {
-			foreach(AssetItem item in folder.children) {
-				if (item is FolderItem) {
-					((FolderItem)item).foldout = false;
-				}
-			}
-		});
+		AddCommonContextOptions(gm, folder);
 		gm.ShowAsContext();
 	}
 
 	void AssetContextMenu(AssetItem asset) {
 		GenericMenu gm = new GenericMenu();
-		AddCommonContextOptions(gm, asset);
 		gm.AddItem(new GUIContent("Include dependencies"), false, () => {
 			SortedInsert(AssetDatabase.GetDependencies(asset.path, true), false);
 		});
+		AddCommonContextOptions(gm, asset);
 		gm.ShowAsContext();
 	}
 
@@ -351,115 +340,34 @@ public class InteractiveAssetSelector : EditorWindow {
 		});
 	}
 
-
+	static Color light = new Color(0.8f, 0.8f, 0.8f), lighter = new Color(0.9f, 0.9f, 0.9f);
 	Vector2 scrollPosition = Vector2.zero;
 	void OnGUI() {
-//		string currentPath = "";
-//		List<string> currentSplittedPath = new List<string>();
-//		int visiblePathIndex = 0;
-
-
-//		foreach (SelectionAsset asset in selection) {
-//			GUILayout.Label(asset.asset.name+" "+asset.asset.GetType()+" "+asset.path);
-//		}
-//
-//		EditorGUILayout.Space();
-
-		scrollPosition = EditorGUILayout.BeginScrollView(scrollPosition);
-		foreach (AssetItem asset in selectionRoot.children) {
-			DoItemGUI(asset);
-
-//			string path = asset.path;
-//
-//			int parentPathLength = path.LastIndexOf('/');
-//			string parent = parentPathLength < 0 ? "" : path.Substring(0, parentPathLength);
-//			if (!currentPath.StartsWith(parent)) continue;//Hidden
-//			currentPath = parent;
-//			EditorGUI.indentLevel = PathDepth(currentPath)+1;
-//
-//			string name = path.Substring(parentPathLength+1);//TODO make property?
-//			if (asset.isFolder) {
-//				asset.state = EditorGUILayout.Foldout(asset.state, name);
-//				if (asset.state) {
-//					currentPath = asset.path;
-//				}
-//			}
-//			else {
-//				asset.state = EditorGUILayout.ToggleLeft(name, asset.state);//
-//			}
-
-
-
-			//TODO use split and depth
-//			string[] splittedPath = path.Split('/');
-//
-//			int matchDepth = 0;
-//			while (matchDepth < currentSplittedPath.Count && matchDepth < splittedPath.Length) {
-//				if (!currentSplittedPath[matchDepth].Equals(splittedPath[matchDepth])) {
-//					break;
-//				}
-//				matchDepth++;
-//			}
-//			EditorGUI.indentLevel = matchDepth;
-//			currentSplittedPath.RemoveRange(matchDepth, currentSplittedPath.Count - matchDepth);
-//			while (matchDepth < splittedPath.Length - 1) {
-//				string folder = splittedPath[matchDepth++];
-//				currentSplittedPath.Add(folder);
-//				EditorGUILayout.Foldout(true, folder);
-//				EditorGUI.indentLevel++;
-//			}
-//			EditorGUI.indentLevel++;//TODO icon content
-//			EditorGUILayout.LabelField(splittedPath[matchDepth]);
-
-
-			//
-//			while (!path.StartsWith(currentPath)){
-//				int parentPathLength = currentPath.LastIndexOf('/');
-//				if (parentPathLength < 0) parentPathLength = 0;
-//				currentPath = currentPath.Substring(0, parentPathLength);
-//			}
-//			while (path.StartsWith(currentPath)) {
-//				int nextSlash = path.IndexOf('/', currentPath.Length);
-//				if (nextSlash < 0) {
-//					string file = path.Substring(currentPath.Length);
-//					EditorGUILayout.LabelField(file);
-//					break;
-//				}
-//				else {
-//					int parentPathLength = currentPath.Length;
-//					currentPath = path.Substring(0, nextSlash);
-//					EditorGUILayout.Foldout(true, currentPath.Substring(parentPathLength));
-//				}
-//			}
-
-//			string visiblePath;// = visiblePaths[visiblePathIndex];
-
-//			while (path.StartsWith(visiblePath = visiblePaths[visiblePathIndex++])) {
-//				bool show = EditorGUILayout.Foldout(true, Path.GetDirectoryName(visiblePath));
-//				if (!show) {
-//					//TODO remove on delaycall
-//				}
-//				else {
-//					currentPath = visiblePath;
-//				}
-//			}
-//			while (assetIndex < selection.Count) {
-//
-//				assetIndex++;
-//			}
-//			if (EditorUtility.NaturalCompare(
-
+		// Description
+		Rect descRect = EditorGUILayout.BeginVertical();
+		EditorGUI.DrawRect(descRect, light);
+		if (!string.IsNullOrEmpty(description)) {
+			GUIStyle multiLineBold = new GUIStyle();
+			multiLineBold.font = EditorStyles.boldFont;
+			multiLineBold.wordWrap = true;
+			multiLineBold.padding = new RectOffset(8, 8, 16, 16);
+			EditorGUILayout.LabelField(description, multiLineBold);
 		}
+		EditorGUI.DrawRect(new Rect(descRect.x, descRect.yMax, descRect.width, 1f), Color.grey);
+		EditorGUILayout.EndVertical();
 
-		EditorGUILayout.EndScrollView();
-//		foreach(SelectionAsset asset in selection) {
-//			string path = asset.path;
-//			string parentPath = Directory.GetParent(path).ToString();
-//
-//			if (parentPath.StartsWith(currentPath)) {
-//				string
-//			}
-//		}
+		// Selection
+		if (selectionRoot.children.Count == 0) {
+			EditorGUILayout.HelpBox("Nothing selected", MessageType.Info);
+			GUILayout.FlexibleSpace();
+		}
+		else {
+			scrollPosition = EditorGUILayout.BeginScrollView(scrollPosition);
+			foreach (AssetItem asset in selectionRoot.children) {
+				DoItemGUI(asset);
+			}
+			EditorGUILayout.EndScrollView();
+		}
 
 		// DragAndDrop operation
 		if (Event.current.type == EventType.DragUpdated){
@@ -475,42 +383,81 @@ public class InteractiveAssetSelector : EditorWindow {
 				string path = AssetDatabase.GetAssetPath(obj);
 				SortedInsert(path, true);
 			}
-			//TEST
-//			foreach(Object o in objs) {
-//				string p = AssetDatabase.GetAssetPath(o);
-//				if (!AssetDatabase.IsValidFolder(p)) {
-//					Debug.Log("Folder: "+p);
-//					foreach(string s in AssetDatabase.FindAssets("", new string[]{p})) {
-//						Debug.Log("Asset: "+AssetDatabase.GUIDToAssetPath(s));
-//					}
-//				}
-//			}
 			ValidateSelection();
 		}
 
-		if (OnEndGUI != null) {
-			OnEndGUI(this);//TODO close window if no delegate (have an empty one atleast
+		// Options
+		Rect optionsRect = EditorGUILayout.BeginVertical();
+		EditorGUI.DrawRect(optionsRect, light);
+		EditorGUI.DrawRect(new Rect(optionsRect.x, optionsRect.yMin, optionsRect.width, 1f), lighter);
+		EditorGUILayout.Space();
+		if (OnOptionsGUI != null) {
+			OnOptionsGUI(this);
 		}
 		else {
-			Close();
+			GUILayout.Label("Please, reopen this window to reload the options", EditorStyles.centeredGreyMiniLabel);
 		}
+		EditorGUILayout.Space();
+		EditorGUILayout.EndVertical();
 	}
 
 	void ValidateSelection() {
 		if (ignoreEmptyFolders) {
-			RemoveEmptyFolders(selectionRoot);
+			selectionRoot.RemoveEmptySubFolders();
 		}
 	}
 
-	void RemoveEmptyFolders(FolderItem folder) {//TODO move to FolderItem?
-		folder.children.RemoveAll((asset) => {
-			if (asset is FolderItem) {
-				FolderItem f = (FolderItem)asset;
-				RemoveEmptyFolders(f);
-				return f.children.Count == 0;
+	public static void ExportOptionsGUI(InteractiveAssetSelector selector) {
+		EditorGUILayout.BeginHorizontal();
+		if (GUILayout.Button("Include All Dependencies")) {
+			selector.SortedInsert(AssetDatabase.GetDependencies(selector.GetSelectedPaths()), false);
+		}
+		GUILayout.FlexibleSpace();
+		if (GUILayout.Button("Export...")){
+			selector.ExportSelection();
+		}
+		EditorGUILayout.EndHorizontal();
+	}
+
+	public void ExportSelection(string directory = "", string name = "") {
+		string path = EditorUtility.SaveFilePanel("Export package", directory, name, "unitypackage");
+		AssetDatabase.ExportPackage(GetSelectedPaths(), path, ExportPackageOptions.Interactive);
+	}
+
+	public string[] GetSelectedPaths() {
+		List<string> paths = new List<string>();
+		AddSelectedPaths(selectionRoot, paths);
+		return paths.ToArray();
+	}
+
+	void AddSelectedPaths(FolderItem folder, List<string> pathsList) {
+		foreach(AssetItem item in folder.children) {
+			if (item is FolderItem) {
+				//TODO handle extra options (include/ingore folders?)
+				AddSelectedPaths((FolderItem)item, pathsList);
 			}
-			return false;
-		});
+			else if (item.selected) {
+				pathsList.Add(item.path);
+			}
+		}
+	}
+
+	public Object[] GetSelectedAssets() {
+		List<Object> objs = new List<Object>();
+		AddSelectedAssets(selectionRoot, objs);
+		return objs.ToArray();
+	}
+
+	void AddSelectedAssets(FolderItem folder, List<Object> objsList) {
+		foreach(AssetItem item in folder.children) {
+			if (item is FolderItem) {
+				//TODO handle extra options (include/ingore folders?)
+				AddSelectedAssets((FolderItem)item, objsList);
+			}
+			else if (item.selected) {
+				objsList.Add(item.asset);
+			}
+		}
 	}
 
 	//TODO save selections + load dropdown
