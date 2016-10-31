@@ -141,26 +141,41 @@ public class InteractiveAssetSelector : EditorWindow {
 	public static InteractiveAssetSelector InitSelector(Object[] selection) {
 		InteractiveAssetSelector ias = GetWindow<InteractiveAssetSelector>(true, "Select Assets", true);
 
-		foreach(Object obj in selection) {
-			ias.SortedInsert(obj);
-		}
+		ias.SortedInsert(selection);
 		ias.ValidateSelection();
 
 		return ias;
 	}
 
-//	[MenuItem("Assets/Interactive Asset Selector")]
-	public static InteractiveAssetSelector InitSelector() {
-		return InitSelector(Selection.GetFiltered(typeof(Object), SelectionMode.DeepAssets));
+	public static InteractiveAssetSelector InitSelector(string[] selection) {
+		InteractiveAssetSelector ias = GetWindow<InteractiveAssetSelector>(true, "Select Assets", true);
+
+		ias.SortedInsert(selection, false);
+		ias.ValidateSelection();
+
+		return ias;
 	}
 
 	[MenuItem("Assets/Custom Exporter")]
 	public static InteractiveAssetSelector ExportSelector() {
-		InteractiveAssetSelector ias = InitSelector();
-		ias.description = "Assets to Export";// Assets to export Assets to export Assets to exportAssets to exportAssets to exportAssets to export";
+		InteractiveAssetSelector ias = ExportSelector(Selection.GetFiltered(typeof(Object), SelectionMode.DeepAssets));
+		return ias;
+	}
+
+	public static InteractiveAssetSelector ExportSelector(string[] assets, string description = "") {
+		InteractiveAssetSelector ias = InitSelector(assets);
+		ias.description = string.IsNullOrEmpty(description) ? "Assets to Export" : description;
 		ias.OnOptionsGUI = ExportOptionsGUI;
 		return ias;
 	}
+
+	public static InteractiveAssetSelector ExportSelector(Object[] assets, string description = "") {
+		InteractiveAssetSelector ias = InitSelector(assets);
+		ias.description = string.IsNullOrEmpty(description) ? "Assets to Export" : description;
+		ias.OnOptionsGUI = ExportOptionsGUI;
+		return ias;
+	}
+
 
 	void OnEnable() {
 		if (selectionRoot == null) {
